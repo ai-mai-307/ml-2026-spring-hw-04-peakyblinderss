@@ -87,7 +87,7 @@
 - `RatecodeID`,
 - `VendorID`.
 
-#### UK Car Accidents (варианты):
+#### IEEE-CIS Fraud Detection (варианты):
 - `ProductCD`,
 - `card4` — платёжная система карты,
 - `card6` — тип карты,
