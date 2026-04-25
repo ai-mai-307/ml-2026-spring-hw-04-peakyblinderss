@@ -1,0 +1,78 @@
+on:
+  pull_request:
+    - workflows: [nb-clean-review]
+      filter:
+        source_branches: ["**"]
+        target_branches: ["main"]
+        paths: ["**/solution.ipynb", "solution.ipynb"]
+
+workflows:
+  nb-clean-review:
+    tasks:
+      - name: make-clean-notebook
+        cubes:
+          - name: build-review-branch
+            image: python:3.11-slim
+            script:
+              - |
+                set -euo pipefail
+
+                export DEBIAN_FRONTEND=noninteractive
+
+                apt-get update -y
+                apt-get install -y --no-install-recommends git ca-certificates
+                rm -rf /var/lib/apt/lists/*
+
+                python -m pip install --upgrade pip
+                pip install --no-cache-dir nbformat
+
+                echo "Event: ${SOURCECRAFT_EVENT:-}"
+                echo "Source branch: ${SOURCECRAFT_COMMIT_REF_NAME:-}"
+                echo "PR slug: ${SOURCECRAFT_PR_SLUG:-}"
+                echo "Commit title: ${SOURCECRAFT_COMMIT_TITLE:-}"
+
+                case "${SOURCECRAFT_COMMIT_TITLE:-}" in
+                  "CI: refresh review branch"*) echo "Skip CI self-commit"; exit 0 ;;
+                esac
+
+                mkdir -p review
+
+                python tools/make_clean_ipynb.py \
+                  --glob "solution.ipynb" \
+                  --output "review/solution_clean.ipynb"
+
+                if [ ! -f "review/solution_clean.ipynb" ]; then
+                  echo "review/solution_clean.ipynb was not created"
+                  exit 1
+                fi
+
+                git config user.name "sourcecraft-ci"
+                git config user.email "ci@sourcecraft"
+
+                if [ -n "${SOURCECRAFT_PR_SLUG:-}" ]; then
+                  REVIEW_BRANCH="review/pr-${SOURCECRAFT_PR_SLUG}"
+                else
+                  SAFE_REF="$(echo "${SOURCECRAFT_COMMIT_REF_NAME:-review}" | sed 's#[^A-Za-z0-9._/-]#-#g')"
+                  REVIEW_BRANCH="review/${SAFE_REF}"
+                fi
+
+                echo "Review branch: ${REVIEW_BRANCH}"
+
+                git checkout -B "${REVIEW_BRANCH}"
+
+                git add review/solution_clean.ipynb
+
+                if git diff --cached --quiet; then
+                  echo "No changes in cleaned notebook. Done."
+                  exit 0
+                fi
+
+                git commit -m "CI: refresh review branch"
+
+                ORIGIN_URL="$(git remote get-url origin)"
+                PUSH_TOKEN="${SOURCECRAFT_TOKEN}"
+
+                AUTH_URL="$(echo "${ORIGIN_URL}" | sed "s#https://git@#https://git:${PUSH_TOKEN}@#")"
+                git remote set-url origin "${AUTH_URL}"
+
+                git push -f origin "${REVIEW_BRANCH}"
